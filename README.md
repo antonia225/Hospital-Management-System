@@ -1,4 +1,4 @@
-# Hospital Admission Management Database (Oracle SQL/PLSQL)
+# Hospital Admission Management Database 
 
 Oracle SQL/PLSQL project focused on the full **patient admission process** in a hospital setting.
 
