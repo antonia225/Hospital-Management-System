@@ -1,5 +1,7 @@
 # Hospital Admission Management Database 
 
+![Oracle](https://img.shields.io/badge/Oracle-SQL%2FPLSQL-red)
+
 Oracle SQL/PLSQL project focused on the full **patient admission process** in a hospital setting.
 
 The implementation models how a patient is admitted, treated, monitored, and discharged, while enforcing safety and operational rules directly in the database layer.
