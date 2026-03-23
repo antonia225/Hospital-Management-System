@@ -1,126 +1,110 @@
-# Hospital Admission Management Database 
+# Hospital Admission Management Database
 
-![Oracle](https://img.shields.io/badge/Oracle-SQL%2FPLSQL-red)
+![Oracle](https://img.shields.io/badge/Oracle_DB-21c_Free-F80000?logo=oracle&logoColor=white)
+![PL/SQL](https://img.shields.io/badge/PL%2FSQL-Triggers%20%7C%20Packages%20%7C%20Cursors-blue)
 
-Oracle SQL/PLSQL project focused on the full **patient admission process** in a hospital setting.
-
-The implementation models how a patient is admitted, treated, monitored, and discharged, while enforcing safety and operational rules directly in the database layer.
-
-## Project Overview
-
-This project is centered on the admission lifecycle:
-
-1. A patient is assigned to a doctor and a room.
-2. Admission is allowed only if all linked entities are active and room capacity is not exceeded.
-3. Medication administration is recorded only within the valid admission interval.
-4. Discharge is validated against treatment plans and ICU minimum stay policies.
-5. Critical objects are protected from accidental deletion or schema-level DROP operations.
-
-The goal is to keep business logic close to data, so invalid states are blocked even if application code is bypassed.
+Oracle SQL/PL/SQL project focused on the full **patient admission lifecycle** — admission, treatment, and discharge — with business rules enforced at the database layer so invalid states are blocked even if application code is bypassed.
 
 ## Database Schema
 
 ![Conceptual Diagram](assets/conceptual_diagram.png)
 
-## Main Components
+The schema covers:
 
-### 1. Data Model (`create.sql`)
+| Category | Tables |
+|---|---|
+| Clinical | `patients`, `blood_groups` |
+| Organisation | `departments`, `rooms`, `room_types` |
+| Staff | `employees`, `doctors`, `nurses` |
+| Admission flow | `admissions`, `medicines`, `admission_medicines` |
 
-The schema defines entities required for admission management:
+## Business Rules Enforced
 
-- Clinical context: `patients`, `blood_groups`
-- Organization: `departments`, `rooms`, `room_types`
-- Staff: `employees`, `doctors`, `nurses`
-- Admission flow: `admissions`, `medicines`, `admission_medicines`
-
-Key schema constraints include:
-
-- PK/FK relationships for admission traceability
-- Date consistency checks (`admission_date` vs `discharge_date`)
-- Contact and format validation (SSN, phone, email)
-- State consistency (`active` + `inactive_date`)
-
-### 2. Trigger-Based Rule Enforcement
-
-The project uses row-level, statement-level, compound, and schema-level triggers.
-
-Important admission-related trigger logic:
-
-- **Entity activation checks**: prevents admissions with inactive patient/doctor/room.
-- **Room capacity checks**: compound trigger blocks admissions beyond room bed count.
-- **Medication window checks**: blocks administration before admission or after discharge.
-- **Discharge-treatment consistency**: blocks discharge if medication duration exceeds discharge date.
-- **Soft delete policy**: blocks direct deletes for critical operational tables.
-- **Role exclusivity**: employee cannot be registered simultaneously as doctor and nurse.
-- **DDL protection**: prevents dropping core hospital tables.
-
-### 3. PL/SQL Subprograms
-
-- `finalize_discharge` (`procedures.sql`)
-  Handles discharge workflow and raises targeted exceptions for invalid scenarios.
-
-- `get_latest_admission_doctor` (`functions.sql`)
-  Returns supervising doctor for the most recent admission of a patient.
-
-- `report_doctors_by_department` (`cursors.sql`)
-  Department/year reporting on doctors and number of admissions.
-
-- `generate_patient_medical_report` (`collections.sql`)
-  Full patient report using PL/SQL collections (medications, admission history, recent rooms).
-
-- `pkg_medical_management` (`packages.sql`)
-  Encapsulates reusable admission operations:
-  - bed availability check
-  - admission duration calculation
-  - new admission registration
-  - medicine assignment
-  - complete admission details report
+| Rule | Mechanism |
+|---|---|
+| Admissions only allowed with active patient, doctor, and room | `BEFORE INSERT` row trigger |
+| Room capacity cannot be exceeded | Compound trigger (collects rows, checks after statement) |
+| Medicine administration must fall within the admission window | `BEFORE INSERT/UPDATE` row trigger |
+| Discharge blocked if any medication plan is still active | `BEFORE UPDATE` row trigger + discharge procedure |
+| ICU patients must stay a minimum of 3 days | Discharge procedure with user-defined exception |
+| An employee cannot be both a doctor and a nurse | Mutual `BEFORE INSERT` row triggers |
+| Core tables cannot be dropped | Schema-level `BEFORE DROP` DDL trigger |
+| Deactivating an employee cascades to their doctor/nurse record | `AFTER UPDATE` row trigger |
+| Deactivating a department cascades to its rooms | `AFTER UPDATE` row trigger |
+| Direct `DELETE` on critical tables is blocked (soft-delete only) | `BEFORE DELETE` row triggers |
 
 ## Repository Structure
 
-- `create.sql`  
-  Schema, constraints, core triggers, and seed data.
-
-- `procedures.sql`  
-  Discharge validation procedure and execution block.
-
-- `functions.sql`  
-  Latest-admission-doctor function and execution block.
-
-- `cursors.sql`  
-  Cursor-based department reporting procedure and execution block.
-
-- `collections.sql`  
-  Collection-based patient medical report and execution block.
-
-- `packages.sql`  
-  Admission management package (spec + body) and execution block.
-
-- `r_lmd_trigger.sql`  
-  Row-level triggers for doctor/nurse role exclusivity + validation block.
-
-- `c_lmd_trigger.sql`  
-  Statement-level trigger for occupancy statistics + validation block.
-
-- `ldd_trigger.sql`  
-  Schema-level DROP-protection trigger + validation block.
+```
+.
+├── create.sql           # Schema (tables + constraints), core triggers, seed data
+├── procedures.sql       # finalize_discharge — validates and applies discharge
+├── functions.sql        # get_latest_admission_doctor — returns supervising doctor
+├── cursors.sql          # report_doctors_by_department — cursor-based reporting
+├── collections.sql      # generate_patient_medical_report — PL/SQL collections
+├── packages.sql         # pkg_medical_management — reusable admission operations
+├── r_lmd_trigger.sql    # Row-level triggers: doctor/nurse role exclusivity
+├── c_lmd_trigger.sql    # Statement-level trigger: post-DML occupancy report
+├── ldd_trigger.sql      # Schema-level DDL trigger: DROP protection
+└── assets/
+    └── conceptual_diagram.png
+```
 
 ## Environment
 
-- Oracle Database (tested with Oracle Free)
+- Oracle Database 21c Free (or compatible)
 - PDB: `FREEPDB1`
-- SQL*Plus or SQL Developer
-- Optional Docker setup for local Oracle instance
+- SQL\*Plus or SQL Developer
+
+### Local setup with Docker
+
+Pull and start an Oracle Free container:
+
+```bash
+docker run -d \
+  --name oracle-free \
+  -p 1521:1521 \
+  -e ORACLE_PASSWORD=yourpassword \
+  container-registry.oracle.com/database/free:latest
+```
+
+Wait until the container is healthy (check with `docker logs oracle-free`), then create a dedicated application user inside the PDB. Connect first as SYSTEM:
+
+```bash
+sqlplus system/yourpassword@//localhost:1521/FREEPDB1
+```
+
+Then create the user and grant the necessary privileges:
+
+```sql
+CREATE USER app_user IDENTIFIED BY yourpassword
+  DEFAULT TABLESPACE users
+  TEMPORARY TABLESPACE temp
+  QUOTA UNLIMITED ON users;
+
+GRANT CONNECT, RESOURCE TO app_user;
+GRANT CREATE SESSION,
+      CREATE TABLE,
+      CREATE VIEW,
+      CREATE SEQUENCE,
+      CREATE PROCEDURE,
+      CREATE TRIGGER,
+      CREATE TYPE,
+      ADMINISTER DATABASE TRIGGER  -- required for schema-level DDL triggers
+TO app_user;
+```
+
+Reconnect as the application user:
+
+```bash
+sqlplus app_user/yourpassword@//localhost:1521/FREEPDB1
+```
+
+This user has full permissions over its own schema but cannot see Oracle system tables or other schemas — which keeps the environment clean and matches how the scripts were written.
 
 ## How to Run
 
-Connect to Oracle:
-
-```bash
-sqlplus APP_USER/your_password@//localhost:1521/FREEPDB1
-```
-
-Run scripts in this order:
+Execute scripts in this order — each depends on the schema created by the previous one:
 
 ```sql
 @create.sql
@@ -134,64 +118,41 @@ Run scripts in this order:
 @ldd_trigger.sql
 ```
 
-## Test Cases
+Each script includes a `SET SERVEROUTPUT ON` test block that runs automatically and prints pass/fail results.
 
-Each script contains executable test blocks (`SET SERVEROUTPUT ON`) that validate expected behavior.
+### Full reset
 
-### `procedures.sql` (`finalize_discharge`)
+To drop all tables and start fresh, temporarily disable the DDL protection trigger:
 
-- Case 1: valid discharge
-- Case 2: incomplete medication plan (blocked)
-- Case 3: ICU minimum stay violation (blocked)
-- Case 4: inactive linked entity (blocked)
-- Case 5: non-existent admission (handled)
+```sql
+ALTER TRIGGER trg_protect_drop_tables DISABLE;
 
-### `functions.sql` (`get_latest_admission_doctor`)
+DROP TABLE admission_medicines CASCADE CONSTRAINTS;
+DROP TABLE admissions         CASCADE CONSTRAINTS;
+DROP TABLE nurses             CASCADE CONSTRAINTS;
+DROP TABLE doctors            CASCADE CONSTRAINTS;
+DROP TABLE employees          CASCADE CONSTRAINTS;
+DROP TABLE rooms              CASCADE CONSTRAINTS;
+DROP TABLE departments        CASCADE CONSTRAINTS;
+DROP TABLE patients           CASCADE CONSTRAINTS;
+DROP TABLE medicines          CASCADE CONSTRAINTS;
+DROP TABLE room_types         CASCADE CONSTRAINTS;
+DROP TABLE blood_groups       CASCADE CONSTRAINTS;
 
-- Case 1: valid patient with admissions
-- Case 2: non-existent patient (`NO_DATA_FOUND` path)
-- Case 3: duplicate patient name (`TOO_MANY_ROWS` path)
+ALTER TRIGGER trg_protect_drop_tables ENABLE;
+```
 
-### `cursors.sql` (`report_doctors_by_department`)
+## Test Coverage
 
-- Case 1: reporting year with admissions
-- Case 2: reporting year without admissions for some/all departments
+Each script contains self-contained test blocks that validate both expected success and expected failure paths.
 
-### `collections.sql` (`generate_patient_medical_report`)
-
-- Case 1: existing patient SSN with data
-- Case 2: missing patient SSN
-
-### `packages.sql` (`pkg_medical_management`)
-
-- Test 1: room bed availability
-- Test 2: admission duration calculation
-- Test 3: new admission registration
-- Test 4: medicine assignment for admission
-- Test 5: details for newly inserted admission
-- Test 6: details for existing admission with treatments
-
-### `r_lmd_trigger.sql`
-
-- Valid doctor insertion
-- Invalid nurse insertion on same employee (blocked)
-- Valid nurse insertion
-- Invalid doctor insertion on same employee (blocked)
-
-### `c_lmd_trigger.sql`
-
-- INSERT single admission
-- INSERT multiple admissions
-- UPDATE diagnosis
-- DELETE single discharge
-- DELETE multiple discharges
-- Trigger output shows operation type, impacted rooms, and occupancy metrics
-
-### `ldd_trigger.sql`
-
-- DROP on unprotected temporary table (allowed)
-- DROP on protected core table (blocked)
-
-## Author
-
-Antonia Stoica
+| Script | Cases tested |
+|---|---|
+| `procedures.sql` | Valid discharge; incomplete medication plan (blocked); ICU minimum stay (blocked); inactive entity (blocked); non-existent admission |
+| `functions.sql` | Valid patient; `NO_DATA_FOUND`; `TOO_MANY_ROWS` on duplicate last name |
+| `cursors.sql` | Year with admissions; year with no admissions |
+| `collections.sql` | Existing patient SSN; missing SSN |
+| `packages.sql` | Bed availability; duration calculation; new admission; medicine assignment; admission details report |
+| `r_lmd_trigger.sql` | Valid doctor insert; blocked nurse on same employee; valid nurse insert; blocked doctor on same employee |
+| `c_lmd_trigger.sql` | Single insert; multiple inserts; update; single delete; multiple deletes |
+| `ldd_trigger.sql` | DROP on unprotected table (allowed); DROP on protected table (blocked) |

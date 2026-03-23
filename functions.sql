@@ -46,14 +46,17 @@ END get_latest_admission_doctor;
 
 SET SERVEROUTPUT ON;
 BEGIN
+  -- Case 1: valid patient with admissions
   DBMS_OUTPUT.PUT_LINE('Case 1: Valid patient with admissions');
   DBMS_OUTPUT.PUT_LINE(get_latest_admission_doctor('Iacob'));
   DBMS_OUTPUT.PUT_LINE('');
 
+  -- Case 2: NO_DATA_FOUND — patient name does not exist
   DBMS_OUTPUT.PUT_LINE('Case 2: NO_DATA_FOUND - non-existent patient');
   DBMS_OUTPUT.PUT_LINE(get_latest_admission_doctor('MissingName'));
   DBMS_OUTPUT.PUT_LINE('');
 
+  -- Case 3: TOO_MANY_ROWS — insert a duplicate last name, test, then roll back
   INSERT INTO patients (patient_id, name, first_name, ssn, birth_date, address, phone, email, blood_group)
   VALUES (
     3006,
@@ -66,12 +69,11 @@ BEGIN
     'maria.iacob@example.com',
     2
   );
-  COMMIT;
 
   DBMS_OUTPUT.PUT_LINE('Case 3: TOO_MANY_ROWS - duplicate patient last name');
   DBMS_OUTPUT.PUT_LINE(get_latest_admission_doctor('Iacob'));
   DBMS_OUTPUT.PUT_LINE('');
-  
-  COMMIT;
+
+  ROLLBACK;
 END;
 /
