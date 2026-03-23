@@ -18,6 +18,10 @@ This project is centered on the admission lifecycle:
 
 The goal is to keep business logic close to data, so invalid states are blocked even if application code is bypassed.
 
+## Database Schema
+
+![Conceptual Diagram](assets/conceptual_diagram.png)
+
 ## Main Components
 
 ### 1. Data Model (`create.sql`)
