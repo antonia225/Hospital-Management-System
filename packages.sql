@@ -1,266 +1,279 @@
--- Să se creeze un pachet pentru gestionarea procesului de internare și a administrării 
--- medicamentelor pe durata internării. Pachetul va defini două tipuri de date complexe, 
--- unul pentru stocarea completă a detaliilor unei internări (record) și unul pentru lista 
--- medicamentelor administrate unui pacient (nested table), astfel încât informațiile să 
--- poată fi prelucrate unitar. În cadrul pachetului se vor implementa două funcții: una 
--- care verifică disponibilitatea paturilor dintr-un salon și returnează numărul de locuri 
--- libere, respectiv una care calculează durata unei internări în zile. De asemenea, se vor 
--- implementa două proceduri: una care înregistrează o internare nouă folosind regulile deja 
--- existente în schemă (constrângeri și trigger-e) și una care adaugă/înregistrează administrarea 
--- unui medicament în perioada internării. Prin aceste componente, pachetul oferă un flux 
--- integrat pentru internare și tratament, fără a duplica regulile de validare deja impuse 
--- în baza de date.
+-- Create a package for admission and medication management.
+-- The package defines complex data types, utility functions, and procedures
+-- to register admissions, record medications, and display full admission details.
 
-CREATE OR REPLACE PACKAGE pkg_gestiune_medicala AS
-  -- Tipuri de date
-  TYPE t_detalii_internare IS RECORD (
-    id_internare internari.id_internare%TYPE,
-    nume_pacient angajati.nume%TYPE,
-    prenume_pacient angajati.prenume%TYPE,
-    nume_medic angajati.nume%TYPE,
-    prenume_medic angajati.prenume%TYPE,
-    nr_salon saloane.nr_salon%TYPE,
-    data_internare internari.data_internare%TYPE,
-    data_externare internari.data_externare%TYPE,
-    diagnostic internari.diagnostic%TYPE
+CREATE OR REPLACE PACKAGE pkg_medical_management AS
+  TYPE t_admission_details IS RECORD (
+    admission_id        admissions.admission_id%TYPE,
+    patient_name        patients.name%TYPE,
+    patient_first_name  patients.first_name%TYPE,
+    doctor_name         employees.name%TYPE,
+    doctor_first_name   employees.first_name%TYPE,
+    room_number         rooms.room_number%TYPE,
+    admission_date      admissions.admission_date%TYPE,
+    discharge_date      admissions.discharge_date%TYPE,
+    diagnosis           admissions.diagnosis%TYPE
   );
-  
-  TYPE t_medicament_rec IS RECORD (
-    denumire medicamente.denumire%TYPE,
-    doza internari_medicamente.doza%TYPE,
-    data_administrare internari_medicamente.data_administrare%TYPE
+
+  TYPE t_medicine_rec IS RECORD (
+    medicine_name       medicines.name%TYPE,
+    dose                admission_medicines.dose%TYPE,
+    administration_date admission_medicines.administration_date%TYPE
   );
-  
-  TYPE t_medicamente_administrate IS TABLE OF t_medicament_rec;
-  
-  -- Funcții
-  FUNCTION verifica_disponibilitate_paturi(
-    p_id_salon saloane.id_salon%TYPE,
-    p_data_internare DATE
+
+  TYPE t_administered_medicines IS TABLE OF t_medicine_rec;
+
+  FUNCTION check_bed_availability(
+    p_room_id rooms.room_id%TYPE,
+    p_admission_date DATE
   ) RETURN NUMBER;
-  
-  FUNCTION calculeaza_durata_internare(
-    p_id_internare internari.id_internare%TYPE
+
+  FUNCTION calculate_admission_duration(
+    p_admission_id admissions.admission_id%TYPE
   ) RETURN NUMBER;
-  
-  -- Proceduri
-  PROCEDURE inregistreaza_internare_noua(
-    p_id_internare internari.id_internare%TYPE,
-    p_id_pacient pacienti.id_pacient%TYPE,
-    p_id_medic medici.id_angajat%TYPE,
-    p_id_salon saloane.id_salon%TYPE,
-    p_data_internare DATE,
-    p_diagnostic VARCHAR2
+
+  PROCEDURE register_new_admission(
+    p_admission_id admissions.admission_id%TYPE,
+    p_patient_id patients.patient_id%TYPE,
+    p_doctor_id doctors.employee_id%TYPE,
+    p_room_id rooms.room_id%TYPE,
+    p_admission_date DATE,
+    p_diagnosis VARCHAR2
   );
-  
-  PROCEDURE adauga_medicament_internare(
-    p_id_internare internari.id_internare%TYPE,
-    p_id_medicament medicamente.id_medicament%TYPE,
-    p_doza VARCHAR2,
-    p_frecventa VARCHAR2,
-    p_data_administrare DATE,
-    p_durata_zile NUMBER
+
+  PROCEDURE add_admission_medicine(
+    p_admission_id admissions.admission_id%TYPE,
+    p_medicine_id medicines.medicine_id%TYPE,
+    p_dose VARCHAR2,
+    p_frequency VARCHAR2,
+    p_administration_date DATE,
+    p_duration_days NUMBER
   );
-  
-  PROCEDURE afiseaza_detalii_internare(
-    p_id_internare internari.id_internare%TYPE
+
+  PROCEDURE show_admission_details(
+    p_admission_id admissions.admission_id%TYPE
   );
-END pkg_gestiune_medicala;
+END pkg_medical_management;
 /
 
-CREATE OR REPLACE PACKAGE BODY pkg_gestiune_medicala AS
+CREATE OR REPLACE PACKAGE BODY pkg_medical_management AS
 
-  FUNCTION verifica_disponibilitate_paturi(
-    p_id_salon saloane.id_salon%TYPE,
-    p_data_internare DATE
+  FUNCTION check_bed_availability(
+    p_room_id rooms.room_id%TYPE,
+    p_admission_date DATE
   ) RETURN NUMBER IS
-    v_nr_paturi NUMBER;
-    v_paturi_ocupate NUMBER;
+    v_bed_count NUMBER;
+    v_occupied_beds NUMBER;
   BEGIN
-    -- Obține capacitatea salonului
-    SELECT nr_paturi INTO v_nr_paturi
-    FROM saloane
-    WHERE id_salon = p_id_salon AND activ = 'Y';
-    
-    -- Numără internările active la data respectivă
-    SELECT COUNT(*) INTO v_paturi_ocupate
-    FROM internari
-    WHERE id_salon = p_id_salon
-      AND data_internare <= p_data_internare
-      AND (data_externare IS NULL OR data_externare >= p_data_internare);
-    
-    RETURN v_nr_paturi - v_paturi_ocupate;
+    SELECT bed_count
+    INTO v_bed_count
+    FROM rooms
+    WHERE room_id = p_room_id
+      AND active = 'Y';
+
+    SELECT COUNT(*)
+    INTO v_occupied_beds
+    FROM admissions
+    WHERE room_id = p_room_id
+      AND admission_date <= p_admission_date
+      AND (discharge_date IS NULL OR discharge_date >= p_admission_date);
+
+    RETURN v_bed_count - v_occupied_beds;
   EXCEPTION
     WHEN NO_DATA_FOUND THEN
-      RAISE_APPLICATION_ERROR(-20310, 'Salon inexistent sau inactiv: ' || p_id_salon);
-  END verifica_disponibilitate_paturi;
-  
-  -- Funcție: Calculează durata internării (zile)
-  FUNCTION calculeaza_durata_internare(
-    p_id_internare internari.id_internare%TYPE
+      RAISE_APPLICATION_ERROR(-20310, 'Room does not exist or is inactive: ' || p_room_id);
+  END check_bed_availability;
+
+  FUNCTION calculate_admission_duration(
+    p_admission_id admissions.admission_id%TYPE
   ) RETURN NUMBER IS
-    v_data_int DATE;
-    v_data_ext DATE;
+    v_admission_date DATE;
+    v_discharge_date DATE;
   BEGIN
-    SELECT data_internare, data_externare
-    INTO v_data_int, v_data_ext
-    FROM internari
-    WHERE id_internare = p_id_internare;
-    
-    IF v_data_ext IS NULL THEN
-      RETURN TRUNC(SYSDATE - v_data_int);
-    ELSE
-      RETURN TRUNC(v_data_ext - v_data_int);
+    SELECT admission_date, discharge_date
+    INTO v_admission_date, v_discharge_date
+    FROM admissions
+    WHERE admission_id = p_admission_id;
+
+    IF v_discharge_date IS NULL THEN
+      RETURN TRUNC(SYSDATE - v_admission_date);
     END IF;
+
+    RETURN TRUNC(v_discharge_date - v_admission_date);
   EXCEPTION
     WHEN NO_DATA_FOUND THEN
       RETURN NULL;
-  END calculeaza_durata_internare;
-  
-  -- Procedură: Înregistrează internare nouă
-  PROCEDURE inregistreaza_internare_noua(
-    p_id_internare internari.id_internare%TYPE,
-    p_id_pacient pacienti.id_pacient%TYPE,
-    p_id_medic medici.id_angajat%TYPE,
-    p_id_salon saloane.id_salon%TYPE,
-    p_data_internare DATE,
-    p_diagnostic VARCHAR2
+  END calculate_admission_duration;
+
+  PROCEDURE register_new_admission(
+    p_admission_id admissions.admission_id%TYPE,
+    p_patient_id patients.patient_id%TYPE,
+    p_doctor_id doctors.employee_id%TYPE,
+    p_room_id rooms.room_id%TYPE,
+    p_admission_date DATE,
+    p_diagnosis VARCHAR2
   ) IS
   BEGIN
-    -- Inserează internarea
-    INSERT INTO internari (id_internare, id_pacient, id_medic, id_salon, data_internare, diagnostic)
-    VALUES (p_id_internare, p_id_pacient, p_id_medic, p_id_salon, p_data_internare, p_diagnostic);
-    
-    DBMS_OUTPUT.PUT_LINE('SUCCESS: Internare înregistrată cu ID ' || p_id_internare);
-  END inregistreaza_internare_noua;
-  
-  -- Procedură: Adaugă medicament la internare
-  PROCEDURE adauga_medicament_internare(
-    p_id_internare internari.id_internare%TYPE,
-    p_id_medicament medicamente.id_medicament%TYPE,
-    p_doza VARCHAR2,
-    p_frecventa VARCHAR2,
-    p_data_administrare DATE,
-    p_durata_zile NUMBER
+    INSERT INTO admissions (
+      admission_id,
+      patient_id,
+      doctor_id,
+      room_id,
+      admission_date,
+      diagnosis
+    ) VALUES (
+      p_admission_id,
+      p_patient_id,
+      p_doctor_id,
+      p_room_id,
+      p_admission_date,
+      p_diagnosis
+    );
+
+    DBMS_OUTPUT.PUT_LINE('SUCCESS: Admission registered with ID ' || p_admission_id);
+  END register_new_admission;
+
+  PROCEDURE add_admission_medicine(
+    p_admission_id admissions.admission_id%TYPE,
+    p_medicine_id medicines.medicine_id%TYPE,
+    p_dose VARCHAR2,
+    p_frequency VARCHAR2,
+    p_administration_date DATE,
+    p_duration_days NUMBER
   ) IS
   BEGIN
-    -- Inserează medicamentul
-    INSERT INTO internari_medicamente 
-      (id_internare, id_medicament, doza, frecventa, data_administrare, durata_zile)
-    VALUES 
-      (p_id_internare, p_id_medicament, p_doza, p_frecventa, p_data_administrare, p_durata_zile);
-    
-    DBMS_OUTPUT.PUT_LINE('SUCCESS: Medicament adăugat la internarea ' || p_id_internare);
-  END adauga_medicament_internare;
-  
-  -- Procedură: Afișează detalii complete internare
-  PROCEDURE afiseaza_detalii_internare(
-    p_id_internare internari.id_internare%TYPE
+    INSERT INTO admission_medicines (
+      admission_id,
+      medicine_id,
+      dose,
+      frequency,
+      administration_date,
+      duration_days
+    ) VALUES (
+      p_admission_id,
+      p_medicine_id,
+      p_dose,
+      p_frequency,
+      p_administration_date,
+      p_duration_days
+    );
+
+    DBMS_OUTPUT.PUT_LINE('SUCCESS: Medicine added to admission ' || p_admission_id);
+  END add_admission_medicine;
+
+  PROCEDURE show_admission_details(
+    p_admission_id admissions.admission_id%TYPE
   ) IS
-    v_detalii t_detalii_internare;
-    v_medicamente t_medicamente_administrate := t_medicamente_administrate();
-    v_durata NUMBER;
+    v_details t_admission_details;
+    v_medicines t_administered_medicines := t_administered_medicines();
+    v_duration NUMBER;
   BEGIN
-    -- Obține detalii internare
-    SELECT 
-      i.id_internare,
-      p.nume, p.prenume,
-      a.nume, a.prenume,
-      s.nr_salon,
-      i.data_internare,
-      i.data_externare,
-      i.diagnostic
-    INTO v_detalii
-    FROM internari i
-    JOIN pacienti p ON i.id_pacient = p.id_pacient
-    JOIN medici m ON i.id_medic = m.id_angajat
-    JOIN angajati a ON m.id_angajat = a.id_angajat
-    JOIN saloane s ON i.id_salon = s.id_salon
-    WHERE i.id_internare = p_id_internare;
-    
-    -- Obține medicamente
+    SELECT
+      a.admission_id,
+      p.name,
+      p.first_name,
+      e.name,
+      e.first_name,
+      r.room_number,
+      a.admission_date,
+      a.discharge_date,
+      a.diagnosis
+    INTO v_details
+    FROM admissions a
+    JOIN patients p ON a.patient_id = p.patient_id
+    JOIN doctors d ON a.doctor_id = d.employee_id
+    JOIN employees e ON d.employee_id = e.employee_id
+    JOIN rooms r ON a.room_id = r.room_id
+    WHERE a.admission_id = p_admission_id;
+
     FOR rec IN (
-      SELECT m.denumire, im.doza, im.data_administrare
-      FROM internari_medicamente im
-      JOIN medicamente m ON im.id_medicament = m.id_medicament
-      WHERE im.id_internare = p_id_internare
-      ORDER BY im.data_administrare
+      SELECT m.name, am.dose, am.administration_date
+      FROM admission_medicines am
+      JOIN medicines m ON am.medicine_id = m.medicine_id
+      WHERE am.admission_id = p_admission_id
+      ORDER BY am.administration_date
     ) LOOP
-      v_medicamente.EXTEND;
-      v_medicamente(v_medicamente.COUNT).denumire := rec.denumire;
-      v_medicamente(v_medicamente.COUNT).doza := rec.doza;
-      v_medicamente(v_medicamente.COUNT).data_administrare := rec.data_administrare;
+      v_medicines.EXTEND;
+      v_medicines(v_medicines.COUNT).medicine_name := rec.name;
+      v_medicines(v_medicines.COUNT).dose := rec.dose;
+      v_medicines(v_medicines.COUNT).administration_date := rec.administration_date;
     END LOOP;
-    
-    -- Calculează durata
-    v_durata := calculeaza_durata_internare(p_id_internare);
-    
-    -- Afișează
-    DBMS_OUTPUT.PUT_LINE('RAPORT INTERNARE #' || v_detalii.id_internare);
-    DBMS_OUTPUT.PUT_LINE('Pacient: ' || v_detalii.nume_pacient || ' ' || v_detalii.prenume_pacient);
-    DBMS_OUTPUT.PUT_LINE('Medic coordonator: ' || v_detalii.nume_medic || ' ' || v_detalii.prenume_medic);
-    DBMS_OUTPUT.PUT_LINE('Salon: ' || v_detalii.nr_salon);
-    DBMS_OUTPUT.PUT_LINE('Data internare: ' || TO_CHAR(v_detalii.data_internare, 'DD-MON-YYYY'));
-    DBMS_OUTPUT.PUT_LINE('Data externare: ' || 
-      CASE WHEN v_detalii.data_externare IS NULL THEN 'În curs' 
-           ELSE TO_CHAR(v_detalii.data_externare, 'DD-MON-YYYY') END);
-    DBMS_OUTPUT.PUT_LINE('Durata: ' || v_durata || ' zile');
-    DBMS_OUTPUT.PUT_LINE('Diagnostic: ' || NVL(v_detalii.diagnostic, 'N/A'));
-    
-    DBMS_OUTPUT.PUT_LINE('--- Medicamente administrate ---');
-    IF v_medicamente.COUNT = 0 THEN
-      DBMS_OUTPUT.PUT_LINE('  (Niciun medicament)');
+
+    v_duration := calculate_admission_duration(p_admission_id);
+
+    DBMS_OUTPUT.PUT_LINE('ADMISSION REPORT #' || v_details.admission_id);
+    DBMS_OUTPUT.PUT_LINE('Patient: ' || v_details.patient_name || ' ' || v_details.patient_first_name);
+    DBMS_OUTPUT.PUT_LINE('Coordinating doctor: ' || v_details.doctor_name || ' ' || v_details.doctor_first_name);
+    DBMS_OUTPUT.PUT_LINE('Room: ' || v_details.room_number);
+    DBMS_OUTPUT.PUT_LINE('Admission date: ' || TO_CHAR(v_details.admission_date, 'DD-MON-YYYY'));
+    DBMS_OUTPUT.PUT_LINE('Discharge date: ' ||
+      CASE
+        WHEN v_details.discharge_date IS NULL THEN 'Ongoing'
+        ELSE TO_CHAR(v_details.discharge_date, 'DD-MON-YYYY')
+      END);
+    DBMS_OUTPUT.PUT_LINE('Duration: ' || v_duration || ' days');
+    DBMS_OUTPUT.PUT_LINE('Diagnosis: ' || NVL(v_details.diagnosis, 'N/A'));
+
+    DBMS_OUTPUT.PUT_LINE('--- Administered medicines ---');
+    IF v_medicines.COUNT = 0 THEN
+      DBMS_OUTPUT.PUT_LINE('  (No medicines)');
     ELSE
-      FOR i IN v_medicamente.FIRST..v_medicamente.LAST LOOP
-        DBMS_OUTPUT.PUT_LINE('  ' || v_medicamente(i).denumire || 
-          ' - ' || v_medicamente(i).doza || 
-          ' (de la ' || TO_CHAR(v_medicamente(i).data_administrare, 'DD-MON-YYYY') || ')');
+      FOR i IN v_medicines.FIRST .. v_medicines.LAST LOOP
+        DBMS_OUTPUT.PUT_LINE(
+          '  ' || v_medicines(i).medicine_name ||
+          ' - ' || v_medicines(i).dose ||
+          ' (from ' || TO_CHAR(v_medicines(i).administration_date, 'DD-MON-YYYY') || ')'
+        );
       END LOOP;
     END IF;
-  END afiseaza_detalii_internare;
-END pkg_gestiune_medicala;
+  END show_admission_details;
+END pkg_medical_management;
 /
 
 SET SERVEROUTPUT ON;
 BEGIN
-  DBMS_OUTPUT.PUT_LINE('Test 1: Verificare disponibilitate paturi');
-  DBMS_OUTPUT.PUT_LINE('Paturi disponibile în salon 101: ' || 
-    pkg_gestiune_medicala.verifica_disponibilitate_paturi(101, SYSDATE));
-  DBMS_OUTPUT.PUT_LINE('');
-  
-  DBMS_OUTPUT.PUT_LINE('Test 2: Calcul durata internare');
-  DBMS_OUTPUT.PUT_LINE('Durata internare 4001: ' || 
-    pkg_gestiune_medicala.calculeaza_durata_internare(4001) || ' zile');
-  DBMS_OUTPUT.PUT_LINE('');
-  
-  DBMS_OUTPUT.PUT_LINE('Test 3: Înregistrare internare nouă');
-  pkg_gestiune_medicala.inregistreaza_internare_noua(
-    p_id_internare => 4006,
-    p_id_pacient => 3001,
-    p_id_medic => 2001,
-    p_id_salon => 101,
-    p_data_internare => SYSDATE,
-    p_diagnostic => 'Control periodic'
+  DBMS_OUTPUT.PUT_LINE('Test 1: Check bed availability');
+  DBMS_OUTPUT.PUT_LINE(
+    'Available beds in room 101: ' ||
+    pkg_medical_management.check_bed_availability(101, SYSDATE)
   );
   DBMS_OUTPUT.PUT_LINE('');
-  
-  DBMS_OUTPUT.PUT_LINE('Test 4: Adăugare medicament');
-  pkg_gestiune_medicala.adauga_medicament_internare(
-    p_id_internare => 4006,
-    p_id_medicament => 1001,
-    p_doza => '500 mg',
-    p_frecventa => '2 ori/zi',
-    p_data_administrare => SYSDATE,
-    p_durata_zile => 5
+
+  DBMS_OUTPUT.PUT_LINE('Test 2: Calculate admission duration');
+  DBMS_OUTPUT.PUT_LINE(
+    'Admission 4001 duration: ' ||
+    pkg_medical_management.calculate_admission_duration(4001) || ' days'
   );
   DBMS_OUTPUT.PUT_LINE('');
-  
-  DBMS_OUTPUT.PUT_LINE('Test 5: Afișare detalii internare completă');
-  pkg_gestiune_medicala.afiseaza_detalii_internare(4006);
+
+  DBMS_OUTPUT.PUT_LINE('Test 3: Register new admission');
+  pkg_medical_management.register_new_admission(
+    p_admission_id => 4006,
+    p_patient_id => 3001,
+    p_doctor_id => 2001,
+    p_room_id => 101,
+    p_admission_date => SYSDATE,
+    p_diagnosis => 'Routine checkup'
+  );
   DBMS_OUTPUT.PUT_LINE('');
-  
-  DBMS_OUTPUT.PUT_LINE('Test 6: Afișare internare existentă cu medicamente');
-  pkg_gestiune_medicala.afiseaza_detalii_internare(4001);
+
+  DBMS_OUTPUT.PUT_LINE('Test 4: Add medicine');
+  pkg_medical_management.add_admission_medicine(
+    p_admission_id => 4006,
+    p_medicine_id => 1001,
+    p_dose => '500 mg',
+    p_frequency => '2 times/day',
+    p_administration_date => SYSDATE,
+    p_duration_days => 5
+  );
+  DBMS_OUTPUT.PUT_LINE('');
+
+  DBMS_OUTPUT.PUT_LINE('Test 5: Show complete admission details');
+  pkg_medical_management.show_admission_details(4006);
+  DBMS_OUTPUT.PUT_LINE('');
+
+  DBMS_OUTPUT.PUT_LINE('Test 6: Show existing admission with medicines');
+  pkg_medical_management.show_admission_details(4001);
 
   ROLLBACK;
 END;

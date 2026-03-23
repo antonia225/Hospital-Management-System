@@ -1,120 +1,116 @@
--- Să se implementeze o procedură care primește ca parametri ID-ul unei internări și o dată 
--- de externare propusă și verifică dacă externarea pacientului este permisă. Validarea se 
--- realizează printr-o singură interogare SQL, folosind informații despre internare, pacient, 
--- medicul coordonator și salon. Se ridică excepția medicament_incomplet dacă există tratamente 
--- care ar depăși data externării propuse, externare_ati_restrictionata dacă pacientul este 
--- internat la ATI și durata internării este mai mică de 3 zile, respectiv entitate_inactiva 
--- dacă pacientul, medicul sau salonul sunt marcate ca inactive în sistem. Dacă toate condițiile 
--- sunt îndeplinite, se actualizează înregistrarea internării cu data externării și starea „vindecat”. 
--- Procedura se va apela astfel încât să fie evidențiate toate excepțiile definite, precum și un 
--- caz de externare realizată cu succes.
+-- Implement a procedure that receives an admission ID and a proposed discharge date
+-- and verifies whether the patient's discharge is allowed. Validation is performed
+-- with a single SQL query using admission, patient, coordinating doctor, and room data.
+-- The procedure raises dedicated exceptions for: incomplete medication plans,
+-- ICU discharge restrictions (minimum 3 days), and inactive linked entities.
+-- If all checks pass, it updates the admission with the discharge date and status.
 
-CREATE OR REPLACE PROCEDURE finalizeaza_externare(
-  p_id_internare internari.id_internare%TYPE,
-  p_data_externare DATE
+CREATE OR REPLACE PROCEDURE finalize_discharge(
+  p_admission_id admissions.admission_id%TYPE,
+  p_discharge_date DATE
 ) IS
-  medicament_incomplet EXCEPTION;
-  externare_ati_restrictionata EXCEPTION;
-  entitate_inactiva EXCEPTION;
+  ex_incomplete_medication EXCEPTION;
+  ex_icu_discharge_restricted EXCEPTION;
+  ex_inactive_entity EXCEPTION;
 
-  v_tip_salon VARCHAR2(20);
-  v_data_internare DATE;
-  v_entitate_inactiva NUMBER;
-  v_medicament_incomplet NUMBER;
+  v_room_type VARCHAR2(20);
+  v_admission_date DATE;
+  v_inactive_entity_count NUMBER;
+  v_incomplete_med_count NUMBER;
 BEGIN
   SELECT COUNT(*)
-  INTO v_entitate_inactiva
-  FROM internari i
-  JOIN pacienti p ON i.id_pacient = p.id_pacient
-  JOIN medici m ON i.id_medic = m.id_angajat
-  JOIN angajati a ON m.id_angajat = a.id_angajat
-  JOIN saloane s ON i.id_salon = s.id_salon
-  WHERE i.id_internare = p_id_internare
-    AND (p.activ = 'N' OR m.activ = 'N' OR s.activ = 'N');
+  INTO v_inactive_entity_count
+  FROM admissions i
+  JOIN patients p ON i.patient_id = p.patient_id
+  JOIN doctors d ON i.doctor_id = d.employee_id
+  JOIN rooms r ON i.room_id = r.room_id
+  WHERE i.admission_id = p_admission_id
+    AND (p.active = 'N' OR d.active = 'N' OR r.active = 'N');
 
-  IF v_entitate_inactiva > 0 THEN
-    RAISE entitate_inactiva;
+  IF v_inactive_entity_count > 0 THEN
+    RAISE ex_inactive_entity;
   END IF;
-  
+
   SELECT COUNT(*)
-  INTO v_medicament_incomplet
-  FROM internari_medicamente
-  WHERE id_internare = p_id_internare
-    AND (data_administrare + durata_zile - 1) > p_data_externare;
-  
-  IF v_medicament_incomplet > 0 THEN
-    RAISE medicament_incomplet;
+  INTO v_incomplete_med_count
+  FROM admission_medicines
+  WHERE admission_id = p_admission_id
+    AND (administration_date + duration_days - 1) > p_discharge_date;
+
+  IF v_incomplete_med_count > 0 THEN
+    RAISE ex_incomplete_medication;
   END IF;
-  
-  SELECT t.denumire, i.data_internare
-  INTO v_tip_salon, v_data_internare
-  FROM internari i
-  JOIN saloane s ON i.id_salon = s.id_salon
-  JOIN tipuri t ON s.tip = t.id_tip
-  WHERE i.id_internare = p_id_internare;
-  
-  IF p_data_externare IS NULL THEN
-    RAISE_APPLICATION_ERROR(-20007, 'Data externarii este obligatorie.');
+
+  SELECT rt.name, i.admission_date
+  INTO v_room_type, v_admission_date
+  FROM admissions i
+  JOIN rooms r ON i.room_id = r.room_id
+  JOIN room_types rt ON r.type = rt.type_id
+  WHERE i.admission_id = p_admission_id;
+
+  IF p_discharge_date IS NULL THEN
+    RAISE_APPLICATION_ERROR(-20007, 'Discharge date is required.');
   END IF;
-  
-  IF p_data_externare < v_data_internare THEN
-    RAISE_APPLICATION_ERROR(-20008, 'Data externarii nu poate fi inainte de data internarii.');
+
+  IF p_discharge_date < v_admission_date THEN
+    RAISE_APPLICATION_ERROR(-20008, 'Discharge date cannot be before admission date.');
   END IF;
-  
-  IF UPPER(v_tip_salon) = 'ATI' AND (p_data_externare - v_data_internare) < 3 THEN
-    RAISE externare_ati_restrictionata;
+
+  IF UPPER(v_room_type) = 'ICU' AND (p_discharge_date - v_admission_date) < 3 THEN
+    RAISE ex_icu_discharge_restricted;
   END IF;
-  
-  UPDATE internari
-  SET data_externare = p_data_externare,
-      stare_externare = 'vindecat'
-  WHERE id_internare = p_id_internare;
-  DBMS_OUTPUT.PUT_LINE('SUCCESS: Externare finalizată cu succes pentru internarea ' || p_id_internare);
-  
+
+  UPDATE admissions
+  SET discharge_date = p_discharge_date,
+      discharge_status = 'recovered'
+  WHERE admission_id = p_admission_id;
+
+  DBMS_OUTPUT.PUT_LINE('SUCCESS: Discharge completed for admission ' || p_admission_id);
+
 EXCEPTION
-  WHEN medicament_incomplet THEN
-    DBMS_OUTPUT.PUT_LINE('EROARE: Există medicamente incomplete la data externării propuse.');
-  WHEN externare_ati_restrictionata THEN
-    DBMS_OUTPUT.PUT_LINE('EROARE: Pacienții din ATI trebuie să fie internați minim 3 zile.');
-  WHEN entitate_inactiva THEN
-    DBMS_OUTPUT.PUT_LINE('EROARE: Una dintre entități (pacient/medic/salon) este inactivă.');
+  WHEN ex_incomplete_medication THEN
+    DBMS_OUTPUT.PUT_LINE('ERROR: There are incomplete medication plans at the proposed discharge date.');
+  WHEN ex_icu_discharge_restricted THEN
+    DBMS_OUTPUT.PUT_LINE('ERROR: ICU patients must remain admitted for at least 3 days.');
+  WHEN ex_inactive_entity THEN
+    DBMS_OUTPUT.PUT_LINE('ERROR: One linked entity (patient/doctor/room) is inactive.');
   WHEN NO_DATA_FOUND THEN
-    DBMS_OUTPUT.PUT_LINE('EROARE: Internarea ' || p_id_internare || ' nu există.');
+    DBMS_OUTPUT.PUT_LINE('ERROR: Admission ' || p_admission_id || ' does not exist.');
   WHEN OTHERS THEN
-    DBMS_OUTPUT.PUT_LINE('EROARE: ' || SQLERRM);
-END finalizeaza_externare;
+    DBMS_OUTPUT.PUT_LINE('ERROR: ' || SQLERRM);
+END finalize_discharge;
 /
 
 SET SERVEROUTPUT ON;
 BEGIN
-  DBMS_OUTPUT.PUT_LINE('Ex 1: Externare validă');
-  finalizeaza_externare(4001, TO_DATE('2025-12-28','YYYY-MM-DD'));
+  DBMS_OUTPUT.PUT_LINE('Case 1: Valid discharge');
+  finalize_discharge(4001, TO_DATE('2025-12-28','YYYY-MM-DD'));
   DBMS_OUTPUT.PUT_LINE('');
-  
-  DBMS_OUTPUT.PUT_LINE('Ex 2: Medicament incomplet');
-  UPDATE internari SET data_externare = NULL, stare_externare = NULL 
-  WHERE id_internare = 4001;
-  finalizeaza_externare(4001, TO_DATE('2025-12-27','YYYY-MM-DD'));
-  DBMS_OUTPUT.PUT_LINE('');
-  
-  DBMS_OUTPUT.PUT_LINE('Ex 3: Externare ATI restrictionata');
-  UPDATE internari SET data_externare = NULL, stare_externare = NULL 
-  WHERE id_internare = 4004;
-  finalizeaza_externare(4004, TO_DATE('2025-12-12','YYYY-MM-DD'));
-  DBMS_OUTPUT.PUT_LINE('');
-  
-  DBMS_OUTPUT.PUT_LINE('Ex 4: Entitate inactiva');
-  UPDATE pacienti SET activ = 'N', data_inactivare = SYSDATE 
-  WHERE id_pacient = 3001;
-  finalizeaza_externare(4001, TO_DATE('2025-12-28','YYYY-MM-DD'));
 
-  UPDATE pacienti SET activ = 'Y', data_inactivare = NULL 
-  WHERE id_pacient = 3001;
+  DBMS_OUTPUT.PUT_LINE('Case 2: Incomplete medication plan');
+  UPDATE admissions SET discharge_date = NULL, discharge_status = NULL
+  WHERE admission_id = 4001;
+  finalize_discharge(4001, TO_DATE('2025-12-27','YYYY-MM-DD'));
   DBMS_OUTPUT.PUT_LINE('');
-  
-  DBMS_OUTPUT.PUT_LINE('Ex 5: Internare inexistentă');
-  finalizeaza_externare(99999, TO_DATE('2025-12-28','YYYY-MM-DD'));
-  
+
+  DBMS_OUTPUT.PUT_LINE('Case 3: ICU discharge restriction');
+  UPDATE admissions SET discharge_date = NULL, discharge_status = NULL
+  WHERE admission_id = 4004;
+  finalize_discharge(4004, TO_DATE('2025-12-12','YYYY-MM-DD'));
+  DBMS_OUTPUT.PUT_LINE('');
+
+  DBMS_OUTPUT.PUT_LINE('Case 4: Inactive entity');
+  UPDATE patients SET active = 'N', inactive_date = SYSDATE
+  WHERE patient_id = 3001;
+  finalize_discharge(4001, TO_DATE('2025-12-28','YYYY-MM-DD'));
+
+  UPDATE patients SET active = 'Y', inactive_date = NULL
+  WHERE patient_id = 3001;
+  DBMS_OUTPUT.PUT_LINE('');
+
+  DBMS_OUTPUT.PUT_LINE('Case 5: Non-existent admission');
+  finalize_discharge(99999, TO_DATE('2025-12-28','YYYY-MM-DD'));
+
   ROLLBACK;
 END;
 /

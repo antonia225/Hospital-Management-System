@@ -1,67 +1,77 @@
--- Să se definească o funcție care primește ca parametru numele de familie al unui pacient 
--- și identifică medicul care a supravegheat cea mai recentă internare a acestuia. Funcția 
--- va returna numele complet și gradul medicului responsabil, obținute printr-o singură 
--- comandă SQL care folosește trei tabele relevante din baza de date. Se vor trata toate 
--- situațiile posibile, inclusiv cazul în care nu există pacientul sau nu are internări 
--- (NO_DATA_FOUND), respectiv cazul în care există mai mulți pacienți cu același nume 
--- (TOO_MANY_ROWS). Funcția va fi apelată în mod demonstrativ astfel încât să fie evidențiat 
--- atât un caz de succes, cât și fiecare tip de excepție tratată.
+-- Define a function that receives a patient last name and returns the doctor who
+-- supervised that patient's most recent admission. The function uses one SQL query
+-- joining three relevant tables and handles all edge cases:
+-- no matching patient/admission (NO_DATA_FOUND) and duplicate patient names
+-- (TOO_MANY_ROWS).
 
-CREATE OR REPLACE FUNCTION get_medic_ultima_internare(
-  p_nume_pacient VARCHAR2
+CREATE OR REPLACE FUNCTION get_latest_admission_doctor(
+  p_patient_name VARCHAR2
 ) RETURN VARCHAR2 IS
-  v_medic_info VARCHAR2(200);
-  v_cnt NUMBER;
+  v_doctor_info VARCHAR2(200);
+  v_count NUMBER;
 BEGIN
-  SELECT COUNT(*) INTO v_cnt FROM pacienti WHERE UPPER(nume) = UPPER(p_nume_pacient);
-  IF v_cnt > 1 THEN
+  SELECT COUNT(*)
+  INTO v_count
+  FROM patients
+  WHERE UPPER(name) = UPPER(p_patient_name);
+
+  IF v_count > 1 THEN
     RAISE TOO_MANY_ROWS;
   END IF;
 
   SELECT (
-    SELECT a.nume || ' ' || a.prenume 
-    FROM angajati a 
-    WHERE a.id_angajat = m.id_angajat) || ' - ' || m.grad
-  INTO v_medic_info
-  FROM pacienti p
-  JOIN internari i ON p.id_pacient = i.id_pacient
-  JOIN medici m ON i.id_medic = m.id_angajat
-  WHERE UPPER(p.nume) = UPPER(p_nume_pacient)
-  ORDER BY i.data_internare DESC
+    SELECT e.name || ' ' || e.first_name
+    FROM employees e
+    WHERE e.employee_id = d.employee_id
+  ) || ' - ' || d.rank
+  INTO v_doctor_info
+  FROM patients p
+  JOIN admissions a ON p.patient_id = a.patient_id
+  JOIN doctors d ON a.doctor_id = d.employee_id
+  WHERE UPPER(p.name) = UPPER(p_patient_name)
+  ORDER BY a.admission_date DESC
   FETCH FIRST 1 ROW ONLY;
-  
-  RETURN v_medic_info;
-  
+
+  RETURN v_doctor_info;
+
 EXCEPTION
   WHEN NO_DATA_FOUND THEN
-    RETURN 'EROARE: Pacient inexistent sau fara internari';
+    RETURN 'ERROR: Patient not found or no admissions available.';
   WHEN TOO_MANY_ROWS THEN
-    RETURN 'EROARE: Exista mai multi pacienti cu numele ' || p_nume_pacient;
+    RETURN 'ERROR: Multiple patients found with last name ' || p_patient_name;
   WHEN OTHERS THEN
-    RETURN 'EROARE: ' || SQLERRM;
-END get_medic_ultima_internare;
+    RETURN 'ERROR: ' || SQLERRM;
+END get_latest_admission_doctor;
 /
 
 SET SERVEROUTPUT ON;
 BEGIN
-  DBMS_OUTPUT.PUT_LINE('Ex 1: Pacient valid cu internari');
-  DBMS_OUTPUT.PUT_LINE(get_medic_ultima_internare('Iacob'));
+  DBMS_OUTPUT.PUT_LINE('Case 1: Valid patient with admissions');
+  DBMS_OUTPUT.PUT_LINE(get_latest_admission_doctor('Iacob'));
   DBMS_OUTPUT.PUT_LINE('');
-  
-  DBMS_OUTPUT.PUT_LINE('Ex 2: NO_DATA_FOUND - pacient inexistent');
-  DBMS_OUTPUT.PUT_LINE(get_medic_ultima_internare('NumeInexistent'));
+
+  DBMS_OUTPUT.PUT_LINE('Case 2: NO_DATA_FOUND - non-existent patient');
+  DBMS_OUTPUT.PUT_LINE(get_latest_admission_doctor('MissingName'));
   DBMS_OUTPUT.PUT_LINE('');
-  
-  INSERT INTO pacienti (id_pacient, nume, prenume, cnp, data_nasterii, adresa, telefon, email, grupa_sange)
-  VALUES (3006, 'Iacob', 'Maria', '2950606234567', TO_DATE('1995-06-06','YYYY-MM-DD'), 
-          'Str. Test 1', '0722000006', 'maria.iacob@example.com', 2);
+
+  INSERT INTO patients (patient_id, name, first_name, ssn, birth_date, address, phone, email, blood_group)
+  VALUES (
+    3006,
+    'Iacob',
+    'Maria',
+    '2950606234567',
+    TO_DATE('1995-06-06', 'YYYY-MM-DD'),
+    'Test Street 1',
+    '0722000006',
+    'maria.iacob@example.com',
+    2
+  );
   COMMIT;
-  
-  DBMS_OUTPUT.PUT_LINE('Ex 3: TOO_MANY_ROWS - mai multi pacienti cu acelasi nume');
-  DBMS_OUTPUT.PUT_LINE(get_medic_ultima_internare('Iacob'));
+
+  DBMS_OUTPUT.PUT_LINE('Case 3: TOO_MANY_ROWS - duplicate patient last name');
+  DBMS_OUTPUT.PUT_LINE(get_latest_admission_doctor('Iacob'));
   DBMS_OUTPUT.PUT_LINE('');
   
-  DELETE FROM pacienti WHERE id_pacient = 3006;
   COMMIT;
 END;
 /

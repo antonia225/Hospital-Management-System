@@ -1,89 +1,111 @@
--- Să se implementeze trigger-e LMD la nivel de rând pentru a menține corectă înregistrarea 
--- subtipurilor de angajați. Un angajat poate fi încadrat fie ca medic, fie ca asistent, dar 
--- nu în ambele categorii în același timp. Se vor crea două trigger-e: unul pe tabelul MEDICI 
--- și unul pe tabelul ASISTENTI, care se declanșează la fiecare operațiune de inserare și 
--- verifică dacă angajatul respectiv nu există deja în celălalt tabel. Dacă regula este încălcată, 
--- trigger-ul va opri inserarea și va genera o eroare cu un mesaj clar, care explică motivul. 
--- Implementarea se va valida prin teste cu inserări atât valide, cât și invalide.
+-- Implement row-level DML triggers that enforce exclusive employee subtypes:
+-- an employee can be either a doctor or a nurse, but not both.
 
-CREATE OR REPLACE TRIGGER trg_angajat_unic_rol_medic
-BEFORE INSERT OR UPDATE OF id_angajat ON medici
+CREATE OR REPLACE TRIGGER trg_unique_employee_doctor_role
+BEFORE INSERT OR UPDATE OF employee_id ON doctors
 FOR EACH ROW
 DECLARE
   v_exists NUMBER;
 BEGIN
-  IF INSERTING OR :NEW.id_angajat != :OLD.id_angajat THEN
-    SELECT COUNT(*) INTO v_exists 
-    FROM asistenti WHERE id_angajat = :NEW.id_angajat;
-    
+  IF INSERTING OR :NEW.employee_id != :OLD.employee_id THEN
+    SELECT COUNT(*)
+    INTO v_exists
+    FROM nurses
+    WHERE employee_id = :NEW.employee_id;
+
     IF v_exists > 0 THEN
-      RAISE_APPLICATION_ERROR(-20030, 
-        'EROARE: Angajatul cu ID ' || :NEW.id_angajat || ' este deja înregistrat ca asistent.');
+      RAISE_APPLICATION_ERROR(
+        -20030,
+        'ERROR: Employee ID ' || :NEW.employee_id || ' is already registered as nurse.'
+      );
     END IF;
   END IF;
-END trg_angajat_unic_rol_medic;
+END trg_unique_employee_doctor_role;
 /
 
-CREATE OR REPLACE TRIGGER trg_angajat_unic_rol_asist
-BEFORE INSERT OR UPDATE OF id_angajat ON asistenti
+CREATE OR REPLACE TRIGGER trg_unique_employee_nurse_role
+BEFORE INSERT OR UPDATE OF employee_id ON nurses
 FOR EACH ROW
 DECLARE
   v_exists NUMBER;
 BEGIN
-  IF INSERTING OR :NEW.id_angajat != :OLD.id_angajat THEN
-    SELECT COUNT(*) INTO v_exists 
-    FROM medici WHERE id_angajat = :NEW.id_angajat;
-    
+  IF INSERTING OR :NEW.employee_id != :OLD.employee_id THEN
+    SELECT COUNT(*)
+    INTO v_exists
+    FROM doctors
+    WHERE employee_id = :NEW.employee_id;
+
     IF v_exists > 0 THEN
-      RAISE_APPLICATION_ERROR(-20031, 
-        'EROARE: Angajatul cu ID ' || :NEW.id_angajat || ' este deja înregistrat ca medic.');
+      RAISE_APPLICATION_ERROR(
+        -20031,
+        'ERROR: Employee ID ' || :NEW.employee_id || ' is already registered as doctor.'
+      );
     END IF;
   END IF;
-END trg_angajat_unic_rol_asist;
+END trg_unique_employee_nurse_role;
 /
 
 SET SERVEROUTPUT ON;
 DECLARE
-  v_id_medic NUMBER;
-  v_id_asist NUMBER;
+  v_doctor_id NUMBER;
+  v_nurse_id NUMBER;
 BEGIN
-  SELECT NVL(MAX(id_angajat), 2000) + 1
-  INTO v_id_medic
-  FROM angajati;
-  v_id_asist := v_id_medic + 1;
+  SELECT NVL(MAX(employee_id), 2000) + 1
+  INTO v_doctor_id
+  FROM employees;
 
-  DBMS_OUTPUT.PUT_LINE('Test 1: medic valid');
-  INSERT INTO angajati (id_angajat, nume, prenume, data_angajare, data_nastere, telefon, email, salariu)
-  VALUES (v_id_medic, 'Test', 'Medic', SYSDATE, ADD_MONTHS(SYSDATE, -360),
-          '07' || LPAD(v_id_medic, 8, '0'), 'test.medic' || v_id_medic || '@spital.ro', 10000);
-  INSERT INTO medici (id_angajat, specializare, cod_parafa, grad)
-  VALUES (v_id_medic, 'Medicina Generala', 'PARA' || v_id_medic, 'rezident');
+  v_nurse_id := v_doctor_id + 1;
 
-  DBMS_OUTPUT.PUT_LINE('Test 2: asistent pe acelasi angajat (invalid)');
+  DBMS_OUTPUT.PUT_LINE('Test 1: valid doctor');
+  INSERT INTO employees (employee_id, name, first_name, hire_date, birth_date, phone, email, salary)
+  VALUES (
+    v_doctor_id,
+    'Test',
+    'Doctor',
+    SYSDATE,
+    ADD_MONTHS(SYSDATE, -360),
+    '07' || LPAD(v_doctor_id, 8, '0'),
+    'test.doctor' || v_doctor_id || '@hospital.com',
+    10000
+  );
+
+  INSERT INTO doctors (employee_id, specialization, license_code, rank)
+  VALUES (v_doctor_id, 'General Medicine', 'PARA' || v_doctor_id, 'resident');
+
+  DBMS_OUTPUT.PUT_LINE('Test 2: same employee as nurse (invalid)');
   BEGIN
-    INSERT INTO asistenti (id_angajat, tip, id_salon)
-    VALUES (v_id_medic, 'generalist', 101);
-    DBMS_OUTPUT.PUT_LINE('EROARE: nu trebuia sa permita.');
+    INSERT INTO nurses (employee_id, type, room_id)
+    VALUES (v_doctor_id, 'generalist', 101);
+    DBMS_OUTPUT.PUT_LINE('ERROR: This should have been blocked.');
   EXCEPTION
     WHEN OTHERS THEN
-      DBMS_OUTPUT.PUT_LINE('BLOCAT CORECT.');
+      DBMS_OUTPUT.PUT_LINE('CORRECTLY BLOCKED.');
   END;
 
-  DBMS_OUTPUT.PUT_LINE('Test 3: asistent valid');
-  INSERT INTO angajati (id_angajat, nume, prenume, data_angajare, data_nastere, telefon, email, salariu)
-  VALUES (v_id_asist, 'Test', 'Asistent', SYSDATE, ADD_MONTHS(SYSDATE, -300),
-          '07' || LPAD(v_id_asist, 8, '0'), 'test.asist' || v_id_asist || '@spital.ro', 7000);
-  INSERT INTO asistenti (id_angajat, tip, id_salon)
-  VALUES (v_id_asist, 'medical', 102);
+  DBMS_OUTPUT.PUT_LINE('Test 3: valid nurse');
+  INSERT INTO employees (employee_id, name, first_name, hire_date, birth_date, phone, email, salary)
+  VALUES (
+    v_nurse_id,
+    'Test',
+    'Nurse',
+    SYSDATE,
+    ADD_MONTHS(SYSDATE, -300),
+    '07' || LPAD(v_nurse_id, 8, '0'),
+    'test.nurse' || v_nurse_id || '@hospital.com',
+    7000
+  );
 
-  DBMS_OUTPUT.PUT_LINE('Test 4: medic pe acelasi angajat (invalid)');
+  INSERT INTO nurses (employee_id, type, room_id)
+  VALUES (v_nurse_id, 'medical', 102);
+
+  DBMS_OUTPUT.PUT_LINE('Test 4: same employee as doctor (invalid)');
   BEGIN
-    INSERT INTO medici (id_angajat, specializare, cod_parafa, grad)
-    VALUES (v_id_asist, 'Chirurgie', 'PARA' || v_id_asist, 'specialist');
-    DBMS_OUTPUT.PUT_LINE('EROARE: nu trebuia sa permita.');
+    INSERT INTO doctors (employee_id, specialization, license_code, rank)
+    VALUES (v_nurse_id, 'Surgery', 'PARA' || v_nurse_id, 'specialist');
+    DBMS_OUTPUT.PUT_LINE('ERROR: This should have been blocked.');
   EXCEPTION
     WHEN OTHERS THEN
-      DBMS_OUTPUT.PUT_LINE('BLOCAT CORECT.');
+      DBMS_OUTPUT.PUT_LINE('CORRECTLY BLOCKED.');
   END;
 
   ROLLBACK;

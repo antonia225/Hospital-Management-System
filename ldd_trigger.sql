@@ -1,70 +1,72 @@
--- Să se creeze un trigger LDD la nivel de schemă care monitorizează modificările 
--- de tip DDL și blochează încercările de ștergere a tabelelor protejate, pentru a 
--- nu se pierde datele gestionate prin mecanismul de „soft delete”. Trigger-ul se va 
--- declanșa la comenzi de tip DROP și va verifica numele obiectului vizat, iar dacă 
--- acesta este unul dintre tabelele esențiale ale aplicației (PACIENTI, SECTII, SALOANE, 
--- ANGAJATI, MEDICI, ASISTENTI, INTERNARI, INTERNARI_MEDICAMENTE, MEDICAMENTE), comanda 
--- va fi anulată prin ridicarea unei erori cu mesaj descriptiv. În acest fel, structura 
--- bazei de date rămâne protejată împotriva ștergerilor accidentale sau neautorizate.
+-- Create a schema-level DDL trigger that blocks DROP commands for protected
+-- application tables to prevent accidental or unauthorized data loss.
 
-CREATE OR REPLACE TRIGGER trg_protectie_drop_tabele
+CREATE OR REPLACE TRIGGER trg_protect_drop_tables
 BEFORE DROP ON SCHEMA
 DECLARE
   v_table_name VARCHAR2(50);
 BEGIN
   v_table_name := UPPER(ora_dict_obj_name);
-  
+
   IF v_table_name IN (
-    'PACIENTI', 'SECTII', 'SALOANE', 'ANGAJATI', 'MEDICI', 'ASISTENTI',
-    'INTERNARI', 'INTERNARI_MEDICAMENTE', 'MEDICAMENTE'
+    'BLOOD_GROUPS',
+    'ROOM_TYPES',
+    'PATIENTS',
+    'DEPARTMENTS',
+    'ROOMS',
+    'EMPLOYEES',
+    'DOCTORS',
+    'NURSES',
+    'ADMISSIONS',
+    'ADMISSION_MEDICINES',
+    'MEDICINES'
   ) THEN
-    RAISE_APPLICATION_ERROR(-20200, 
-      'ACCES INTERZIS: Tabelul ' || v_table_name || ' nu poate fi șters!');
+    RAISE_APPLICATION_ERROR(
+      -20200,
+      'ACCESS DENIED: Table ' || v_table_name || ' cannot be dropped.'
+    );
   END IF;
-END trg_protectie_drop_tabele;
+END trg_protect_drop_tables;
 /
 
 SET SERVEROUTPUT ON;
 BEGIN
-  DBMS_OUTPUT.PUT_LINE('Test 1: Creare tabel temporar de test');
-  EXECUTE IMMEDIATE 'CREATE TABLE test_temp_drop (id NUMBER, descriere VARCHAR2(50))';
-  DBMS_OUTPUT.PUT_LINE('SUCCESS: Tabel test_temp_drop creat.');
+  DBMS_OUTPUT.PUT_LINE('Test 1: Create temporary test table');
+  EXECUTE IMMEDIATE 'CREATE TABLE test_temp_drop (id NUMBER, description VARCHAR2(50))';
+  DBMS_OUTPUT.PUT_LINE('SUCCESS: Table test_temp_drop created.');
   DBMS_OUTPUT.PUT_LINE('');
-  
-  DBMS_OUTPUT.PUT_LINE('Test 2: Ștergere tabel temporar neprotejat (SUCCESS)');
+
+  DBMS_OUTPUT.PUT_LINE('Test 2: Drop unprotected temporary table (SUCCESS)');
   BEGIN
     EXECUTE IMMEDIATE 'DROP TABLE test_temp_drop';
-    DBMS_OUTPUT.PUT_LINE('SUCCESS: Tabelul test_temp_drop a fost șters (neprotejat).');
+    DBMS_OUTPUT.PUT_LINE('SUCCESS: Table test_temp_drop was dropped (unprotected).');
   EXCEPTION
     WHEN OTHERS THEN
-      DBMS_OUTPUT.PUT_LINE('EROARE neașteptată: ' || SQLERRM);
+      DBMS_OUTPUT.PUT_LINE('UNEXPECTED ERROR: ' || SQLERRM);
   END;
   DBMS_OUTPUT.PUT_LINE('');
-  
-  DBMS_OUTPUT.PUT_LINE('Test 3: Încercare ștergere PACIENTI (BLOCAT)');
+
+  DBMS_OUTPUT.PUT_LINE('Test 3: Attempt to drop PATIENTS (BLOCKED)');
   BEGIN
-    EXECUTE IMMEDIATE 'DROP TABLE pacienti';
-    DBMS_OUTPUT.PUT_LINE('EROARE: Nu ar fi trebuit să permită ștergerea!');
+    EXECUTE IMMEDIATE 'DROP TABLE patients';
+    DBMS_OUTPUT.PUT_LINE('ERROR: DROP should not have been allowed.');
   EXCEPTION
     WHEN OTHERS THEN
-      DBMS_OUTPUT.PUT_LINE('BLOCAT CORECT: ' || SQLERRM);
+      DBMS_OUTPUT.PUT_LINE('CORRECTLY BLOCKED: ' || SQLERRM);
   END;
   DBMS_OUTPUT.PUT_LINE('');
 END;
 /
 
--- Pentru a șterge efectiv tabelele când e nevoie (ex: reset bază de date),
--- se dezactivează temporar trigger-ul:
+-- To actually drop protected tables (for example, during a full reset),
+-- temporarily disable this trigger:
 --
--- ALTER TRIGGER trg_protectie_drop_tabele DISABLE;
--- 
--- NOTĂ: Pentru GRUPE_SANGE și TIPURI poate fi necesar
--- DROP TABLE ... CASCADE CONSTRAINTS din cauza FK-urilor existente.
+-- ALTER TRIGGER trg_protect_drop_tables DISABLE;
 --
--- DROP TABLE internari_medicamente CASCADE CONSTRAINTS;
--- DROP TABLE internari CASCADE CONSTRAINTS;
--- DROP TABLE asistenti CASCADE CONSTRAINTS;
--- DROP TABLE medici CASCADE CONSTRAINTS;
--- ... (restul tabelelor)
+-- DROP TABLE admission_medicines CASCADE CONSTRAINTS;
+-- DROP TABLE admissions CASCADE CONSTRAINTS;
+-- DROP TABLE nurses CASCADE CONSTRAINTS;
+-- DROP TABLE doctors CASCADE CONSTRAINTS;
+-- ...
 --
--- ALTER TRIGGER trg_protectie_drop_tabele ENABLE;
+-- ALTER TRIGGER trg_protect_drop_tables ENABLE;
